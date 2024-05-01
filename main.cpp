@@ -3,17 +3,36 @@
 #include <algorithm>
 #include <cstdint>
 #include <map>
+#include "caches.hpp"
 #include <windows.h>
 
+
 void task1() {
-    // Реалізувати алгоритми заміщення сторінок та порівняти ці алгоритми по кількості вивантаження - завантаження
-    // TODO: lru, nru, fifo
+    auto lru = new LruCache(128, 4, 64);
+    auto fifo = new FifoCache(128, 4, 64);
 
-    /*const std::vector pageReferences = {1, 2, 3, 4, 1, 2, 5, 1, 2, 3, 4, 5};
-    const int numFrames = 3;
+    uint32_t hits[2] = {0, 0};
+    uint32_t misses[2] = {0, 0};
 
-    std::cout << "Not Recently Used (NRU) Page Loads/Unloads: " << notRecentlyUsed(pageReferences, numFrames) << std::endl;
-    std::cout << "Last Recently Used (LRU) Page Loads/Unloads: " << lastRecentlyUsed(pageReferences, numFrames) << std::endl;*/
+    for(int i = 0; i < 1024 * 64; i++) {
+        uint64_t address = randrange(0x00, 0xFFFF);
+
+        if(lru->access_cache(address))
+            hits[0]++;
+        else
+            misses[0]++;
+
+        if(fifo->access_cache(address))
+            hits[1]++;
+        else
+            misses[1]++;
+    }
+
+    printf("Lru hits/misses: %d/%d\n", hits[0], misses[0]);
+    printf("Fifo hits/misses: %d/%d\n", hits[1], misses[1]);
+
+    delete lru;
+    delete fifo;
 }
 
 void task7_get_free_blocks(std::map<void*, uint64_t>& blocks) {

@@ -17,7 +17,7 @@ char UINT_RW_ARR[4];
 void openFileR(const std::string& path, void** file, void** mapping, char** data) {
     *file = CreateFileR(path.c_str());
     if (*file == INVALID_HANDLE_VALUE)
-        throw std::runtime_error("Failed to open file");
+        throw std::runtime_error("Failed to open file for reading");
     if (GetFileSize(*file, nullptr) < 8) {
         CloseHandle(*file);
         throw std::underflow_error("Size of mailbox is too small!");
@@ -40,7 +40,7 @@ void openFileR(const std::string& path, void** file, void** mapping, char** data
 void openFileW(const std::string& path, const uint32_t minSize, void** file, void** mapping, char** data) {
     *file = CreateFileW(path.c_str());
     if (*file == INVALID_HANDLE_VALUE)
-        throw std::runtime_error("Failed to open file");
+        throw std::runtime_error("Failed to open file for writing");
 
     *mapping = CreateFileMappingW(*file, minSize);
     if (*mapping == nullptr) {
@@ -59,7 +59,7 @@ void openFileW(const std::string& path, const uint32_t minSize, void** file, voi
 void openFileRW(const std::string& path, const uint32_t minSize, void** file, void** mapping, char** data) {
     *file = CreateFileRW(path.c_str());
     if (*file == INVALID_HANDLE_VALUE)
-        throw std::runtime_error("Failed to open file");
+        throw std::runtime_error("Failed to open file for rw");
     if (GetFileSize(*file, nullptr) < 8) {
         CloseHandle(*file);
         throw std::underflow_error("Size of mailbox is too small!");
@@ -89,27 +89,23 @@ uint32_t crc32(const char* buf, uint32_t size) {
     return ~crc;
 }
 
-uint32_t readUint32(std::fstream& file) {
-    uint32_t result;
-    file.read(UINT_RW_ARR, 4);
-    memcpy(&result, UINT_RW_ARR, 4);
-
-    return result;
-}
-
-uint32_t readUint32(std::ifstream& file) {
-    return readUint32((std::fstream&)file);
-}
-
 uint32_t readUint32(const char* data) {
     return *reinterpret_cast<const uint32_t*>(data);
 }
 
-uint32_t readUint32(const char* data, uint32_t& pos) {
-    const uint32_t value = readUint32(data);
-    pos += 4;
+uint32_t MailBox::getMessageAbsoluteAddress(char* data, const uint32_t index) {
+    return getContentStart() + readUint32(data + 8 + index * 4);
+}
 
-    return value;
+uint32_t MailBox::getMessageSize(char* data, const uint32_t index) {
+    uint32_t a = getMessageAbsoluteAddress(data, index);
+    uint32_t s = readUint32(data + a);
+    printf("absolute address of message #%d is %d, size is %d\n", index, a, s);
+    return s;
+}
+
+uint32_t MailBox::getContentStart() {
+    return HEADER_SIZE + max_size * 4;
 }
 
 
@@ -140,7 +136,6 @@ void MailboxEntry::write(char* data) {
 }
 
 MailBox::MailBox(const std::string& name) {
-    uint32_t pos = 0;
     filename = name;
 
     void* file;
@@ -148,8 +143,8 @@ MailBox::MailBox(const std::string& name) {
     char* data;
     openFileR(name, &file, &mapping, &data);
 
-    max_size = readUint32(data, pos);
-    current_index = readUint32(data, pos);
+    max_size = readUint32(data);
+    current_index = readUint32(data + 4);
 
     UnmapViewOfFile(data);
     CloseHandle(mapping);
@@ -163,7 +158,7 @@ MailBox::MailBox(const std::string& name, const uint32_t max_size) {
     void* file;
     void* mapping;
     char* data;
-    openFileW(name, 8 + 4 * max_size, &file, &mapping, &data);
+    openFileW(name, getContentStart(), &file, &mapping, &data);
 
     memcpy(data, &max_size, 4);
     memcpy(data + 4, &current_index, 4);
@@ -186,15 +181,11 @@ uint64_t MailBox::getCurrentSize() {
     void* file;
     void* mapping;
     char* data;
-    char* currentData;
     openFileR(filename, &file, &mapping, &data);
-    memcpy(&currentData, &data, sizeof(char*));
 
-    currentData += 8;
-    uint32_t total_size = 0, pos = 0;
+    uint32_t total_size = 0;
     for (uint32_t i = 0; i < current_index; i++) {
-        uint32_t tmp = readUint32(currentData, pos);
-        total_size += readUint32(data + max_size * 4 + 8 + tmp, pos);
+        total_size += getMessageSize(data, i);
     }
 
     UnmapViewOfFile(data);
@@ -212,21 +203,17 @@ void MailBox::addEntry(MailboxEntry* entry) {
     void* mapping;
     char* data;
 
-    openFileR(filename, &file, &mapping, &data);
-    uint32_t newMinSize = GetFileSize(file, nullptr) + 8 + entry->getContent().size()+1;
+    uint32_t t = getCurrentSize();
 
-    UnmapViewOfFile(data);
-    CloseHandle(mapping);
-    CloseHandle(file);
-
+    uint32_t writeAt = getContentStart() + getCurrentSize() + 8 * current_index;
+    uint32_t newMinSize = writeAt + 8 + entry->getContent().size();
     openFileRW(filename, newMinSize, &file, &mapping, &data);
 
-    uint32_t lastPtr = readUint32(data + 8 + current_index * 4);
-    uint32_t ptr = lastPtr + readUint32(data + 8 + max_size * 4 + lastPtr);
-    printf("Writing at %d\n", ptr);
-    entry->write(data + 8 + max_size * 4 + ptr);
+    printf("writing at %d + %d + %d = %d\n", getContentStart(), t, 8 * current_index, writeAt);
+    entry->write(data + writeAt);
 
-    memcpy(data + current_index * 4 + 8, &ptr, 4);
+    writeAt -= getContentStart();
+    memcpy(data + current_index * 4 + 8, &writeAt, 4);
     current_index++;
     memcpy(data + 4, &current_index, 4);
 
@@ -244,20 +231,31 @@ MailboxEntry* MailBox::readEntry(const uint32_t index, const bool del) {
     char* data;
     openFileR(filename, &file, &mapping, &data);
 
-    const uint32_t ptr = readUint32(data + 8 + index * 4);
-    const uint32_t size = readUint32(data + 8 + max_size * 4 + ptr);
-    const uint32_t checksum = readUint32(data + 8 + max_size * 4 + ptr + 4);
+    const uint32_t ptr = getMessageAbsoluteAddress(data, index);
+    const uint32_t size = getMessageSize(data, index);
+    const uint32_t checksum = readUint32(data + ptr + 4);
 
     const auto content = new char[size + 1];
-    memcpy(content, data, size);
+    memcpy(content, data + ptr + 8, size);
     content[size] = '\0';
 
-    if (crc32(content, size) != checksum)
+    if (crc32(content, size) != checksum) {
+        delete[] content;
+
+        UnmapViewOfFile(data);
+        CloseHandle(mapping);
+        CloseHandle(file);
+
         throw std::runtime_error("Mail entry checksum mismatch!");
+    }
 
     auto* entry = new MailboxEntry(content, size + 1);
 
     delete[] content;
+
+    UnmapViewOfFile(data);
+    CloseHandle(mapping);
+    CloseHandle(file);
 
     if (del)
         deleteEntry(index);
@@ -272,10 +270,24 @@ void MailBox::deleteEntry(const uint32_t index) {
     void* file;
     void* mapping;
     char* data;
-    openFileRW(filename, 0, &file, &mapping, &data);
+    openFileRW(filename, getContentStart() + getCurrentSize() + 8 * current_index, &file, &mapping, &data);
 
-    uint32_t tmp = readUint32(data + 8 + index * 4);
-    uint32_t bytesToMove = readUint32(data + 8 + max_size * 4 + tmp) + 8;
+    uint32_t tmp;
+    uint32_t currentPtrAbs = getMessageAbsoluteAddress(data, index); // move to
+    uint32_t bytesToRemove = getMessageSize(data, index) + 8; // full message size (header + content)
+
+    uint32_t lastPtrAbs = getMessageAbsoluteAddress(data, current_index - 1); // move from
+    uint32_t bytesToMove = lastPtrAbs + getMessageSize(data, current_index - 1) + 8 - currentPtrAbs; // bytes count from start of message to remove to end of last message
+
+    printf("moving %d bytes from %d to %d (removing %d bytes)\n", bytesToMove, lastPtrAbs, currentPtrAbs, bytesToRemove);
+    memcpy(data + currentPtrAbs, data + currentPtrAbs + bytesToRemove, bytesToMove); // move messages
+
+    for(uint32_t i = index; i < current_index; i++) {
+        uint32_t addr;
+        memcpy(&addr, data + HEADER_SIZE + i * 4, 4);
+        addr -= bytesToRemove;
+        memcpy(data + HEADER_SIZE + i * 4, &addr, 4);
+    }
 
     uint32_t indexesToMove = current_index - index - 1;
     memcpy(data + 8 + index * 4, data + 8 + index * 4 + 4, indexesToMove * 4);
@@ -283,22 +295,11 @@ void MailBox::deleteEntry(const uint32_t index) {
     current_index--;
     memcpy(data + 4, &current_index, 4);
 
-    for (uint32_t i = index; i < current_index; i++) {
-        tmp = readUint32(data + 8 + i * 4);
-        uint32_t pos = 8 + max_size * 4 + tmp;
-        uint32_t size_to_move = readUint32(data + pos) + 8;
+    UnmapViewOfFile(data);
+    CloseHandle(mapping);
+    CloseHandle(file);
 
-        pos -= 4;
-        memcpy(data + pos - bytesToMove, data + pos, size_to_move);
-
-        tmp = readUint32(data + 8 + i * 4);
-        tmp -= bytesToMove;
-        memcpy(data + 8 + i * 4, &tmp, 4);
-    }
-
-    uint32_t file_size = GetFileSize(file, nullptr);
-
-    std::filesystem::resize_file(filename, file_size - bytesToMove);
+    //std::filesystem::resize_file(filename, file_size - bytesToRemove);
 }
 
 void MailBox::deleteAllEntries() {

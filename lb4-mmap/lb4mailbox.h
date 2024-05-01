@@ -38,4 +38,10 @@ private:
     std::string filename;
     uint32_t max_size = 0;
     uint32_t current_index = 0;
+
+    static constexpr uint32_t HEADER_SIZE = 8;
+
+    uint32_t getMessageAbsoluteAddress(char* data, uint32_t index);
+    uint32_t getMessageSize(char* data, uint32_t index);
+    uint32_t getContentStart();
 };
