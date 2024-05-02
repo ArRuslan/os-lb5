@@ -31,6 +31,9 @@ void task1() {
     printf("Lru hits/misses: %d/%d\n", hits[0], misses[0]);
     printf("Fifo hits/misses: %d/%d\n", hits[1], misses[1]);
 
+    printf("Lru loading/unloading: %d/%d\n", lru->getLoadingCount(), lru->getUnloadingCount());
+    printf("Fifo loading/unloading: %d/%d\n", fifo->getLoadingCount(), fifo->getUnloadingCount());
+
     delete lru;
     delete fifo;
 }

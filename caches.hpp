@@ -44,6 +44,7 @@ public:
             memset(block, 0, sizeof(CacheBlock));
             block->start_address = block_addr;
             blocks.push_back(block);
+            loading++;
 
             return false;
         }
@@ -64,14 +65,24 @@ public:
             CacheBlock* block = blocks[0];
             blocks.pop_front();
             free(block);
+            unloading++;
         }
 
         auto* new_block = static_cast<CacheBlock*>(malloc(sizeof(CacheBlock)));
         memset(new_block, 0, sizeof(CacheBlock));
         new_block->start_address = block_addr;
         blocks.push_back(new_block);
+        loading++;
 
         return false;
+    }
+
+    uint32_t getLoadingCount() {
+        return loading;
+    }
+
+    uint32_t getUnloadingCount() {
+        return unloading;
     }
 
     ~LruCache() {
@@ -89,6 +100,9 @@ private:
     uint16_t blocks_per_line;
     uint16_t block_size;
     std::vector<std::deque<CacheBlock*>> cache;
+
+    uint32_t loading = 0;
+    uint32_t unloading = 0;
 };
 
 class FifoCache {
@@ -110,14 +124,24 @@ public:
             CacheBlock* block = cache[0];
             cache.pop_front();
             free(block);
+            unloading++;
         }
 
         auto* new_block = static_cast<CacheBlock*>(malloc(sizeof(CacheBlock)));
         memset(new_block, 0, sizeof(CacheBlock));
         new_block->start_address = block_addr;
         cache.push_back(new_block);
+        loading++;
 
         return false;
+    }
+
+    uint32_t getLoadingCount() {
+        return loading;
+    }
+
+    uint32_t getUnloadingCount() {
+        return unloading;
     }
 
     ~FifoCache() {
@@ -132,4 +156,7 @@ private:
     uint16_t blocks;
     uint16_t block_size;
     std::deque<CacheBlock*> cache;
+
+    uint32_t loading = 0;
+    uint32_t unloading = 0;
 };
