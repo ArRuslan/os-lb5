@@ -122,8 +122,8 @@ void task9() {
 
 int main() {
     task1();
-    // task7();
-    // task9();
+    task7();
+    task9();
 
     return 0;
 }

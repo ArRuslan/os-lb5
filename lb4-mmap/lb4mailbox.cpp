@@ -3,6 +3,7 @@
 #include <cstring>
 #include <fstream>
 #include <filesystem>
+#include <dirent.h>
 #include <unistd.h>
 #include <windows.h>
 
@@ -45,14 +46,14 @@ void openFileW(const std::string& path, const uint32_t minSize, void** file, voi
     *mapping = CreateFileMappingW(*file, minSize);
     if (*mapping == nullptr) {
         CloseHandle(*file);
-        throw std::runtime_error("Failed to create file mapping, GetLastError(): "+std::to_string(GetLastError()));
+        throw std::runtime_error("Failed to create file mapping, GetLastError(): " + std::to_string(GetLastError()));
     }
 
     *data = static_cast<char*>(MapViewOfFile(*mapping, FILE_MAP_WRITE, 0, 0, 0));
     if (*data == nullptr) {
         CloseHandle(*mapping);
         CloseHandle(*file);
-        throw std::runtime_error("Failed to map view of file, GetLastError(): "+std::to_string(GetLastError()));
+        throw std::runtime_error("Failed to map view of file, GetLastError(): " + std::to_string(GetLastError()));
     }
 }
 
@@ -100,7 +101,7 @@ uint32_t MailBox::getMessageAbsoluteAddress(char* data, const uint32_t index) {
 uint32_t MailBox::getMessageSize(char* data, const uint32_t index) {
     uint32_t a = getMessageAbsoluteAddress(data, index);
     uint32_t s = readUint32(data + a);
-    printf("absolute address of message #%d is %d, size is %d\n", index, a, s);
+    //printf("absolute address of message #%d is %d, size is %d\n", index, a, s);
     return s;
 }
 
@@ -131,8 +132,8 @@ std::string MailboxEntry::getContent() {
 
 void MailboxEntry::write(char* data) {
     memcpy(data, &content_size, 4);
-    memcpy(data+4, &checksum, 4);
-    memcpy(data+8, content, content_size);
+    memcpy(data + 4, &checksum, 4);
+    memcpy(data + 8, content, content_size);
 }
 
 MailBox::MailBox(const std::string& name) {
@@ -209,7 +210,7 @@ void MailBox::addEntry(MailboxEntry* entry) {
     uint32_t newMinSize = writeAt + 8 + entry->getContent().size();
     openFileRW(filename, newMinSize, &file, &mapping, &data);
 
-    printf("writing at %d + %d + %d = %d\n", getContentStart(), t, 8 * current_index, writeAt);
+    //printf("writing at %d + %d + %d = %d\n", getContentStart(), t, 8 * current_index, writeAt);
     entry->write(data + writeAt);
 
     writeAt -= getContentStart();
@@ -277,12 +278,13 @@ void MailBox::deleteEntry(const uint32_t index) {
     uint32_t bytesToRemove = getMessageSize(data, index) + 8; // full message size (header + content)
 
     uint32_t lastPtrAbs = getMessageAbsoluteAddress(data, current_index - 1); // move from
-    uint32_t bytesToMove = lastPtrAbs + getMessageSize(data, current_index - 1) + 8 - currentPtrAbs; // bytes count from start of message to remove to end of last message
+    uint32_t bytesToMove = lastPtrAbs + getMessageSize(data, current_index - 1) + 8 - currentPtrAbs;
+    // bytes count from start of message to remove to end of last message
 
-    printf("moving %d bytes from %d to %d (removing %d bytes)\n", bytesToMove, lastPtrAbs, currentPtrAbs, bytesToRemove);
+    //printf("moving %d bytes from %d to %d (removing %d bytes)\n", bytesToMove, lastPtrAbs, currentPtrAbs, bytesToRemove);
     memcpy(data + currentPtrAbs, data + currentPtrAbs + bytesToRemove, bytesToMove); // move messages
 
-    for(uint32_t i = index; i < current_index; i++) {
+    for (uint32_t i = index; i < current_index; i++) {
         uint32_t addr;
         memcpy(&addr, data + HEADER_SIZE + i * 4, 4);
         addr -= bytesToRemove;
@@ -317,15 +319,23 @@ void MailBox::deleteAllEntries() {
     UnmapViewOfFile(data);
     CloseHandle(mapping);
     CloseHandle(file);
-
-    std::filesystem::resize_file(filename, 8 + (max_size * 4));
 }
 
 uint32_t MailBox::getMailboxCount() {
     uint32_t count = 0;
-    for (const auto& entry : std::filesystem::directory_iterator("."))
-        if (entry.is_regular_file() && entry.path().extension() == ".mb")
-            count++;
+
+    DIR* dir;
+    dirent* ent;
+    if ((dir = opendir(".")) != nullptr) {
+        while ((ent = readdir(dir)) != nullptr) {
+            size_t s = strlen(ent->d_name);
+            if (s <= 3)
+                continue;
+            if (ent->d_name[s - 3] == '.' && ent->d_name[s - 2] == 'm' && ent->d_name[s - 1] == 'b')
+                count++;
+        }
+        closedir(dir);
+    }
 
     return count;
 }
